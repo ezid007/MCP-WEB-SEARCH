@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-RooCode MCP Server - Web Search Tool with Fallback
+RooCode MCP 서버 - DuckDuckGo 웹 검색 도구
 MCP-WEB-SEARCH
-This MCP server provides web search functionality to RooCode agents.
-It uses DuckDuckGo as primary search engine and falls back to Google Custom Search API when rate limited.
+이 MCP 서버는 RooCode 에이전트에 웹 검색 기능을 제공합니다.
+DuckDuckGo 검색 API 를 사용하여 실시간 웹 검색 결과를 반환합니다.
 """
 
 import json
 import asyncio
-import os
 from typing import Any
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -18,36 +17,27 @@ from mcp.types import (
     CallToolResult,
 )
 from duckduckgo_search import DDGS
-from googleapiclient.discovery import build
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
-# Get API keys from environment
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
 
-# Web search tool definition
+# 검색 도구 정의
 WEB_SEARCH_TOOL = Tool(
     name="web_search",
-    description="Performs web search and returns relevant information and results. Accepts questions or search queries to search on DuckDuckGo.",
+    description="웹 검색을 수행하여 관련 정보와 결과를 반환합니다. 질문이나 검색어를 입력받아 DuckDuckGo 에서 검색합니다.",
     inputSchema={
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Search query (e.g., 'Python programming tutorial', 'Today's weather Seoul')",
+                "description": "검색할 쿼리 (예: 'Python 프로그래밍 튜토리얼', '오늘의 날씨 서울')",
             },
             "max_results": {
                 "type": "integer",
-                "description": "Maximum number of results (default: 10, max: 50)",
+                "description": "최대 결과 수 (기본값: 10, 최대: 50)",
                 "default": 10,
             },
             "region": {
                 "type": "string",
-                "description": "Region code (e.g., 'kr-ko' - Korea, 'us-en' - USA). Default: 'kr-ko'",
+                "description": "지역 코드 (예: 'kr-ko' - 한국, 'us-en' - 미국). 기본값: 'kr-ko'",
                 "default": "kr-ko",
             },
         },
@@ -60,84 +50,42 @@ def perform_web_search(
     query: str, max_results: int = 10, region: str = "kr-ko"
 ) -> list[dict[str, Any]]:
     """
-    Performs web search using DuckDuckGo with Google Custom Search fallback.
+    DuckDuckGo 를 사용하여 웹 검색을 수행합니다.
 
     Args:
-        query: Search query
-        max_results: Maximum number of results
-        region: Region code
+        query: 검색 쿼리
+        max_results: 최대 결과 수
+        region: 지역 코드
 
     Returns:
-        List of search results
+        검색 결과 목록
     """
-    # Try DuckDuckGo first
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, region=region, max_results=max_results))
 
-        # Format results
+        # 결과 포맷팅
         formatted_results = []
         for i, result in enumerate(results, 1):
             formatted_results.append(
                 {
                     "rank": i,
-                    "title": result.get("title", "No title"),
-                    "url": result.get("href", result.get("url", "No URL")),
+                    "title": result.get("title", "제목 없음"),
+                    "url": result.get("href", result.get("url", "URL 없음")),
                     "snippet": result.get(
-                        "body", result.get("description", "No description")
+                        "body", result.get("description", "설명 없음")
                     ),
-                    "date": result.get("date", "Date not provided"),
+                    "date": result.get("date", "날짜 미제공"),
                 }
             )
 
         return formatted_results
     except Exception as e:
-        error_msg = str(e)
-        # Check if it's a rate limit error
-        if "Ratelimit" in error_msg or "202" in error_msg:
-            # Fall back to Google Custom Search
-            return perform_google_search(query, max_results)
-        return [{"error": f"Error during search: {str(e)}"}]
-
-
-def perform_google_search(query: str, max_results: int = 10) -> list[dict[str, Any]]:
-    """
-    Performs web search using Google Custom Search API.
-
-    Args:
-        query: Search query
-        max_results: Maximum number of results
-
-    Returns:
-        List of search results
-    """
-    if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-        return [{"error": "Google API credentials not configured. Please set GOOGLE_API_KEY and GOOGLE_CSE_ID in .env file."}]
-
-    try:
-        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
-        cse = service.cse()
-        result = cse.list(q=query, cx=GOOGLE_CSE_ID, num=min(max_results, 10)).execute()
-
-        formatted_results = []
-        for i, item in enumerate(result.get("items", []), 1):
-            formatted_results.append(
-                {
-                    "rank": i,
-                    "title": item.get("title", "No title"),
-                    "url": item.get("link", "No URL"),
-                    "snippet": item.get("snippet", "No description"),
-                    "date": "Date not provided",
-                }
-            )
-
-        return formatted_results
-    except Exception as e:
-        return [{"error": f"Google search failed: {str(e)}"}]
+        return [{"error": f"검색 중 오류 발생: {str(e)}"}]
 
 
 async def handle_tool_call(name: str, arguments: dict) -> CallToolResult:
-    """Handles tool calls."""
+    """도구 호출을 처리합니다."""
     if name == "web_search":
         query = arguments.get("query", "")
         max_results = arguments.get("max_results", 10)
@@ -149,7 +97,7 @@ async def handle_tool_call(name: str, arguments: dict) -> CallToolResult:
                 content=[
                     TextContent(
                         type="text",
-                        text="Error: Search query is required. Please provide the 'query' parameter.",
+                        text="오류: 검색 쿼리가 필요합니다. 'query' 매개변수를 제공해주세요.",
                     )
                 ],
             )
@@ -157,17 +105,17 @@ async def handle_tool_call(name: str, arguments: dict) -> CallToolResult:
         # 검색 수행
         results = perform_web_search(query, max_results, region)
 
-        # Format results
+        # 결과 포맷팅
         if not results or (len(results) == 1 and "error" in results[0]):
-            error_msg = results[0]["error"] if results else "Unknown error occurred"
+            error_msg = results[0]["error"] if results else "알 수 없는 오류 발생"
             return CallToolResult(
                 success=False,
-                content=[TextContent(type="text", text=f"Search failed: {error_msg}")],
+                content=[TextContent(type="text", text=f"검색 실패: {error_msg}")],
             )
 
-        # Format successful results
-        formatted_output = f"🔍 Search results: '{query}'\n"
-        formatted_output += f"📊 Total {len(results)} results\n"
+        # 성공적인 결과 포맷팅
+        formatted_output = f"🔍 검색 결과: '{query}'\n"
+        formatted_output += f"📊 총 {len(results)}개의 결과\n"
         formatted_output += "=" * 50 + "\n\n"
 
         for result in results:
@@ -188,26 +136,26 @@ async def handle_tool_call(name: str, arguments: dict) -> CallToolResult:
     else:
         return CallToolResult(
             success=False,
-            content=[TextContent(type="text", text=f"Unknown tool: {name}")],
+            content=[TextContent(type="text", text=f"알 수 없는 도구: {name}")],
         )
 
 
 async def main():
-    """MCP server main function."""
+    """MCP 서버 메인 함수."""
     server = Server("roo-code-web-search")
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        """Returns list of available tools."""
+        """사용 가능한 도구 목록을 반환합니다."""
         return [WEB_SEARCH_TOOL]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-        """Calls a tool."""
+        """도구를 호출합니다."""
         result = await handle_tool_call(name, arguments)
         return result.content
 
-    # Run MCP protocol via STDIO
+    # STDIO 를 통해 MCP 프로토콜 실행
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream, write_stream, server.create_initialization_options()
