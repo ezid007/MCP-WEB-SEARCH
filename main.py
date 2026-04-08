@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-RooCode MCP 서버 - DuckDuckGo 웹 검색 도구
+RooCode MCP Server - Web Search Tool with Fallback
 MCP-WEB-SEARCH
-이 MCP 서버는 RooCode 에이전트에 웹 검색 기능을 제공합니다.
-DuckDuckGo 검색 API 를 사용하여 실시간 웹 검색 결과를 반환합니다.
+This MCP server provides web search functionality to RooCode agents.
+It uses DuckDuckGo as primary search engine and falls back to Google Custom Search API when rate limited.
 """
 
 import json
 import asyncio
+import os
 from typing import Any
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -17,6 +18,15 @@ from mcp.types import (
     CallToolResult,
 )
 from duckduckgo_search import DDGS
+from googleapiclient.discovery import build
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Get API keys from environment
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
 
 # 검색 도구 정의
@@ -50,42 +60,88 @@ def perform_web_search(
     query: str, max_results: int = 10, region: str = "kr-ko"
 ) -> list[dict[str, Any]]:
     """
-    DuckDuckGo 를 사용하여 웹 검색을 수행합니다.
+    Performs web search using DuckDuckGo with Google Custom Search fallback.
 
     Args:
-        query: 검색 쿼리
-        max_results: 최대 결과 수
-        region: 지역 코드
+        query: Search query
+        max_results: Maximum number of results
+        region: Region code
 
     Returns:
-        검색 결과 목록
+        List of search results
     """
+    # Try DuckDuckGo first
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, region=region, max_results=max_results))
 
-        # 결과 포맷팅
+        # Check if results are empty (possible rate limit)
+        if not results:
+            raise Exception("Ratelimit")
+
+        # Format results
         formatted_results = []
         for i, result in enumerate(results, 1):
             formatted_results.append(
                 {
                     "rank": i,
-                    "title": result.get("title", "제목 없음"),
-                    "url": result.get("href", result.get("url", "URL 없음")),
+                    "title": result.get("title", "No title"),
+                    "url": result.get("href", result.get("url", "No URL")),
                     "snippet": result.get(
-                        "body", result.get("description", "설명 없음")
+                        "body", result.get("description", "No description")
                     ),
-                    "date": result.get("date", "날짜 미제공"),
+                    "date": result.get("date", "Date not provided"),
                 }
             )
 
         return formatted_results
     except Exception as e:
-        return [{"error": f"검색 중 오류 발생: {str(e)}"}]
+        error_msg = str(e)
+        # Check if it's a rate limit error
+        if "Ratelimit" in error_msg or "202" in error_msg:
+            # Fall back to Google Custom Search
+            return perform_google_search(query, max_results)
+        return [{"error": f"Error during search: {str(e)}"}]
+
+
+def perform_google_search(query: str, max_results: int = 10) -> list[dict[str, Any]]:
+    """
+    Performs web search using Google Custom Search API.
+
+    Args:
+        query: Search query
+        max_results: Maximum number of results
+
+    Returns:
+        List of search results
+    """
+    if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+        return [{"error": "Google API credentials not configured. Please set GOOGLE_API_KEY and GOOGLE_CSE_ID in .env file."}]
+
+    try:
+        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
+        cse = service.cse()
+        result = cse.list(q=query, cx=GOOGLE_CSE_ID, num=min(max_results, 10)).execute()
+
+        formatted_results = []
+        for i, item in enumerate(result.get("items", []), 1):
+            formatted_results.append(
+                {
+                    "rank": i,
+                    "title": item.get("title", "No title"),
+                    "url": item.get("link", "No URL"),
+                    "snippet": item.get("snippet", "No description"),
+                    "date": "Date not provided",
+                }
+            )
+
+        return formatted_results
+    except Exception as e:
+        return [{"error": f"Google search failed: {str(e)}"}]
 
 
 async def handle_tool_call(name: str, arguments: dict) -> CallToolResult:
-    """도구 호출을 처리합니다."""
+    """Handles tool calls."""
     if name == "web_search":
         query = arguments.get("query", "")
         max_results = arguments.get("max_results", 10)
@@ -97,7 +153,7 @@ async def handle_tool_call(name: str, arguments: dict) -> CallToolResult:
                 content=[
                     TextContent(
                         type="text",
-                        text="오류: 검색 쿼리가 필요합니다. 'query' 매개변수를 제공해주세요.",
+                        text="Error: Search query is required. Please provide the 'query' parameter.",
                     )
                 ],
             )
@@ -136,26 +192,26 @@ async def handle_tool_call(name: str, arguments: dict) -> CallToolResult:
     else:
         return CallToolResult(
             success=False,
-            content=[TextContent(type="text", text=f"알 수 없는 도구: {name}")],
+            content=[TextContent(type="text", text=f"Unknown tool: {name}")],
         )
 
 
 async def main():
-    """MCP 서버 메인 함수."""
+    """MCP server main function."""
     server = Server("roo-code-web-search")
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        """사용 가능한 도구 목록을 반환합니다."""
+        """Returns list of available tools."""
         return [WEB_SEARCH_TOOL]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-        """도구를 호출합니다."""
+        """Calls a tool."""
         result = await handle_tool_call(name, arguments)
         return result.content
 
-    # STDIO 를 통해 MCP 프로토콜 실행
+    # Run MCP protocol via STDIO
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream, write_stream, server.create_initialization_options()
