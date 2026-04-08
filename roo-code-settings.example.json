@@ -1,0 +1,10 @@
+{
+    "mcpServers": {
+        "web-search": {
+            "command": "python",
+            "args": ["C:/mcp-web-search/main.py"],
+            "disabled": false,
+            "timeout": 30
+        }
+    }
+}
