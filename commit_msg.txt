@@ -1,4 +1,0 @@
-fix: requirements.txt 에 Google API 의존성 추가
-
-- google-api-python-client>=2.100.0 추가
-- python-dotenv==1.0.0 추가
